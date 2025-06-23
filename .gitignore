@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+# Virtual environments
+.venv
+*.json
+*.csv
+!app/package.json
+!app/package-lock.json
+!app/tsconfig.json
+!app/*-sample.json
+app/.env
+app/wrangler.jsonc
+!itra-race-uids.json
+!itra-race-data-raw.json
+!utmb-race-uids.json
+!utmb-race-data-raw.json
+.omp
