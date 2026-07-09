@@ -19,7 +19,9 @@ Command-line usage:
     
     --start START_UID: Start UID (default: 0)
     --end END_UID: End UID (default: 150000)
-    --workers WORKERS: Number of worker threads (default: 5)
+    --workers WORKERS: Number of worker threads (default: cpu_count)
+    --rate RATE: Max requests/second (default: 4)
+    --batch-size BATCH_SIZE: Batch size (default: 200)
     --debug: Enable debug logging
 
 Final result:
@@ -30,7 +32,6 @@ already exists, the newly found race UIDs are merged into it.
 Gamalan, May 2025
 """
 
-from scrapling.fetchers import Fetcher, AsyncFetcher, StealthyFetcher, PlayWrightFetcher
 import requests
 from tqdm import tqdm
 from pathlib import Path
@@ -38,12 +39,31 @@ import json
 import re
 import concurrent.futures
 import time
+import os
 import threading
-import random
 import argparse
 import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+
+class RateLimiter:
+    """Token-bucket rate limiter for thread-safe request throttling"""
+    def __init__(self, rate_per_second):
+        self.min_interval = 1.0 / rate_per_second if rate_per_second > 0 else 0
+        self.lock = threading.Lock()
+        self.last_request = 0.0
+
+    def acquire(self):
+        """Block until it's safe to make a request (thread-safe)"""
+        if self.min_interval <= 0:
+            return
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_request
+            if elapsed < self.min_interval:
+                time.sleep(self.min_interval - elapsed)
+            self.last_request = time.time()
 
 
 def json_out(obj: dict | list, target: str | Path):
@@ -74,22 +94,27 @@ def extract_year(response_text):
 # Lock for file operations to prevent race conditions
 file_lock = threading.Lock()
 
+
 # Create a session with retry capabilities
 def create_session():
     session = requests.Session()
     retry = Retry(
-        total=3,
-        backoff_factor=0.5,
+        total=5,
+        backoff_factor=1.0,
         status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET"],
     )
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
-    
+
     # Add browser-like headers to avoid 403 errors
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                       'AppleWebKit/537.36 (KHTML, like Gecko) '
+                       'Chrome/123.0.0.0 Safari/537.36'),
+        'Accept': ('text/html,application/xhtml+xml,application/xml;'
+                   'q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'),
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
@@ -100,14 +125,14 @@ def create_session():
         'Sec-Fetch-User': '?1',
         'Cache-Control': 'max-age=0',
     })
-    
+
     return session
 
 
-def check_race_uid(race_uid, save_dir, session, debug=False):
+def check_race_uid(race_uid, save_dir, session, rate_limiter, debug=False):
     """Check if a specific race UID exists on ITRA site"""
     race_file = save_dir / f'itra_race_{race_uid}.json'
-    
+
     # Use a lock to prevent race conditions when checking/creating files
     with file_lock:
         # Check if the file already exists - if so, skip this UID
@@ -123,66 +148,98 @@ def check_race_uid(race_uid, save_dir, session, debug=False):
                     logging.debug(f"UID {race_uid}: File already exists with content, skipping")
                 # File exists and has content, skip this UID
                 return None
-    
+
     url = f'https://itra.run/Races/RaceDetails/{race_uid}'
-    #fetcher = PlayWrightFetcher()
-    #fetcher.configure(auto_match=True,keep_comments=False,keep_cdata=False)
+
     if debug:
         logging.debug(f"UID {race_uid}: Checking at {url}")
-        
-    try:
-        # Add a small random delay to avoid overwhelming the server
-        time.sleep(random.uniform(0.1, 0.3))
-        
-        response = session.get(url)
-        
-        if debug:
-            logging.debug(f"UID {race_uid}: Got response status {response.status_code}")
-            
-        # Use a lock when writing to the file
-        with file_lock:
-            if response.status_code == 200:
-                year = extract_year(response.text)
-                if year is None:
+
+    max_retries = 3
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            # Throttle request rate globally across all threads
+            rate_limiter.acquire()
+
+            response = session.get(url, timeout=15)
+
+            if debug:
+                logging.debug(
+                    f"UID {race_uid}: Got response status {response.status_code}"
+                )
+
+            if response.status_code == 503:
+                retry_count += 1
+                backoff = 2 ** retry_count
+                remaining = max_retries - retry_count
+                logging.warning(
+                    f"UID {race_uid}: 503, "
+                    f"backing off {backoff}s ({remaining} retries left)"
+                )
+                time.sleep(backoff)
+                continue
+
+            # Use a lock when writing to the file
+            with file_lock:
+                if response.status_code == 200:
+                    year = extract_year(response.text)
+                    if year is None:
+                        if debug:
+                            logging.debug(
+                                f"UID {race_uid}: Could not extract year, skipping"
+                            )
+                        return None
+                    json_out({'status': 200, 'url': url, 'year': year}, race_file)
                     if debug:
-                        logging.debug(f"UID {race_uid}: Could not extract year, skipping")
+                        logging.debug(
+                            f"UID {race_uid}: Found race for year {year}, saving"
+                        )
+                    return (race_uid, year)
+                else:
+                    # Race doesn't exist (404, 301, etc.)
+                    if race_file.is_file():
+                        if debug:
+                            logging.debug(
+                                f"UID {race_uid}: Race not found, "
+                                f"removing empty file"
+                            )
+                        race_file.unlink()
                     return None
-                json_out({'status': 200, 'url': url, 'year': year}, race_file)
-                if debug:
-                    logging.debug(f"UID {race_uid}: Found race for year {year}, saving")
-                return (race_uid, year)
-            else:
-                # Remove empty file if race doesn't exist
-                if race_file.is_file():
-                    if debug:
-                        logging.debug(f"UID {race_uid}: Race not found, removing empty file")
-                    race_file.unlink()
+
+        except requests.RequestException as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                logging.warning(
+                    f"Error checking race UID {race_uid} after "
+                    f"{max_retries} retries: {e}"
+                )
+                # Remove empty file if there was an error
+                with file_lock:
+                    if race_file.is_file():
+                        race_file.unlink()
                 return None
-                
-    except requests.RequestException as e:
-        # Log the error but continue to the next UID
-        logging.warning(f"Error checking race UID {race_uid}: {e}")
-        time.sleep(1)  # Backoff on error
-        
-        # Remove empty file if there was an error
-        with file_lock:
-            if race_file.is_file():
-                if debug:
-                    logging.debug(f"UID {race_uid}: Error occurred, removing empty file")
-                race_file.unlink()
-        return None
+            backoff = 2 ** retry_count
+            logging.warning(
+                f"Retrying UID {race_uid} in {backoff}s "
+                f"({max_retries - retry_count} retries left): {e}"
+            )
+            time.sleep(backoff)
+            continue
 
 
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Check existence of ITRA race UIDs')
-    parser.add_argument('--start', type=int, default=0, help='Start UID (default: 0)')
-    parser.add_argument('--end', type=int, default=150000, help='End UID (default: 150000)')
-    parser.add_argument('--workers', type=int, default=5, help='Number of worker threads (default: 5)')
-    parser.add_argument('--batch-size', type=int, default=500, help='Batch size (default: 500)')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    parser.add_argument('--start', type=int, default=0,
+                        help='Start UID (default: 0)')
+    parser.add_argument('--end', type=int, default=200000)
+    parser.add_argument('--workers', type=int, default=os.cpu_count() or 4)
+    parser.add_argument('--rate', type=float, default=4,
+                        help='Max requests/second (default: 4)')
+    parser.add_argument('--batch-size', type=int, default=200)
+    parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
-    
+
     # Configure logging
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
@@ -195,66 +252,64 @@ def main():
     root = Path(__file__).parent
     save_dir = root / 'itra_race_details'
     save_dir.mkdir(exist_ok=True)
-    
-    logging.info(f"Starting ITRA race check from UID {args.start} to {args.end} with {args.workers} workers")
-    
-    # Create a list to store existing races
-    existing_races = []
 
-    # Process race UIDs in batches to better control the workload
-    batch_size = args.batch_size
+    logging.info(
+        f"Starting ITRA race check from UID {args.start} to {args.end} "
+        f"with {args.workers} workers, max {args.rate} req/s"
+    )
 
-    # Process race UIDs concurrently with batching
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-        for batch_start in range(args.start, args.end, batch_size):
-            batch_end = min(batch_start + batch_size, args.end)
-            
-            logging.info(f"Processing batch {batch_start}-{batch_end}")
-            
-            # Create a shared session for this batch
-            session = create_session()
-            
-            # Submit tasks for this batch
-            future_to_uid = {
-                executor.submit(check_race_uid, race_uid, save_dir, session, args.debug): race_uid
-                for race_uid in range(batch_start, batch_end)
-            }
-            
-            # Process results as they complete
-            for future in tqdm(
-                concurrent.futures.as_completed(future_to_uid), 
-                total=batch_end - batch_start,
-                desc=f"Batch {batch_start}-{batch_end}"
-            ):
-                race_uid = future.result()
-                if race_uid is not None:
-                    existing_races.append(race_uid)
-            
-            # Give the server a small break between batches
-            time.sleep(10*60)
-
-    # Output directory for per-year race UID files
     output_dir = root / 'result' / 'race-uids'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Group new races by year
-    races_by_year: dict[int, list[int]] = {}
-    for race_uid, year in existing_races:
-        races_by_year.setdefault(year, []).append(race_uid)
+    # Global rate limiter shared across all threads
+    rate_limiter = RateLimiter(rate_per_second=args.rate)
+    batch_size = args.batch_size
 
-    total_new = 0
-    total_all = 0
-    for year in sorted(races_by_year):
-        output_file = output_dir / f'itra-uids-{year}.json'
-        existing = json_load(output_file)
-        combined = sorted(set(existing + races_by_year[year]))
-        json_out(combined, output_file)
-        total_new += len(races_by_year[year])
-        total_all += len(combined)
-        logging.info(f"Year {year}: {len(races_by_year[year])} new races, total {len(combined)}")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+        for batch_start in range(args.start, args.end, batch_size):
+            batch_end = min(batch_start + batch_size, args.end)
 
-    logging.info(f"Found {total_new} new races across {len(races_by_year)} years. Total: {total_all} races.")
-    logging.info(f"Results saved to {output_dir}/")
+            logging.info(f"Processing batch {batch_start}-{batch_end}")
+
+            session = create_session()
+
+            future_to_uid = {
+                executor.submit(
+                    check_race_uid, race_uid, save_dir,
+                    session, rate_limiter, args.debug
+                ): race_uid
+                for race_uid in range(batch_start, batch_end)
+            }
+
+            batch_found: list[tuple[int, int]] = []
+            for future in tqdm(
+                concurrent.futures.as_completed(future_to_uid),
+                total=batch_end - batch_start,
+                desc=f"Batch {batch_start}-{batch_end}"
+            ):
+                result = future.result()
+                if result is not None:
+                    batch_found.append(result)
+
+            # Merge batch results into per-year files immediately
+            races_by_year: dict[int, list[int]] = {}
+            for race_uid, year in batch_found:
+                races_by_year.setdefault(year, []).append(race_uid)
+
+            for year, uids in races_by_year.items():
+                output_file = output_dir / f'itra-uids-{year}.json'
+                existing = json_load(output_file)
+                combined = sorted(set(existing + uids))
+                json_out(combined, output_file)
+                logging.info(f"  Year {year}: +{len(uids)} race(s) (total {len(combined)})")
+
+            logging.info(
+                f"Batch {batch_start}-{batch_end} done — "
+                f"{len(batch_found)} races found, cooling down for 2 minutes..."
+            )
+            time.sleep(120)
+
+    logging.info(f"All batches complete. Results in {output_dir}/")
 
 
 if __name__ == "__main__":

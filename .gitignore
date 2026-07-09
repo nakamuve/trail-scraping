@@ -7,7 +7,6 @@ wheels/
 *.egg-info
 # Virtual environments
 .venv
-*.json
 *.csv
 !app/package.json
 !app/package-lock.json

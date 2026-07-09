@@ -7,7 +7,51 @@ from pathlib import Path
 import json
 import time
 import logging
-from typing import Union, Optional
+import os
+import threading
+from typing import Union
+
+# Rate limiter for request throttling
+class RateLimiter:
+    """Token-bucket rate limiter for thread-safe request throttling"""
+    def __init__(self, rate_per_second):
+        self.min_interval = 1.0 / rate_per_second if rate_per_second > 0 else 0
+        self.lock = threading.Lock()
+        self.last_request = 0.0
+
+    def acquire(self):
+        """Block until it's safe to make a request (thread-safe)"""
+        if self.min_interval <= 0:
+            return
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_request
+            if elapsed < self.min_interval:
+                time.sleep(self.min_interval - elapsed)
+            self.last_request = time.time()
+
+
+def create_session():
+    session = requests.Session()
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    retry = Retry(
+        total=5,
+        backoff_factor=1.0,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+    })
+    return session
+
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +61,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
 
 def json_in(file_path):
     try:
@@ -162,7 +207,7 @@ def get_meta_info(request_response: requests.Response) -> dict:
     return meta_info
 
 
-def add_page(request_url: Union[str, bytes], info: dict) -> int:
+def add_page(request_url: Union[str, bytes], info: dict, session, rate_limiter: RateLimiter) -> int:
     """
     PURPOSE
     The add_page function fetches and parses a web page containing race event results, 
@@ -172,6 +217,8 @@ def add_page(request_url: Union[str, bytes], info: dict) -> int:
     ARGUMENTS
     request_url (str | bytes): The URL of the web page to be requested and parsed. This URL points to a specific race event page.
     info (dict): A dictionary to be updated with the extracted metadata and results. This dictionary will be populated with information such as race title, category, results, number of results, and breakdowns by country, sex, and age.
+    session (requests.Session): The HTTP session with retry configuration.
+    rate_limiter (RateLimiter): The rate limiter for request throttling.
     
     RETURNS
     int: A status code indicating the outcome of the function:
@@ -198,8 +245,23 @@ def add_page(request_url: Union[str, bytes], info: dict) -> int:
     n_results_classname = "font-16 font-d-18 font-oxanium-bold display-list-result_hit_qty__DPf3k"
 
     logging.info(f"Requesting page: {request_url}")
-    # Request the page
-    response = requests.get(request_url)
+
+    # Request the page with retries and rate limiting
+    max_retries = 3
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            rate_limiter.acquire()
+            response = session.get(request_url, timeout=15)
+            break
+        except requests.RequestException as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                logging.error(f"Request failed after {max_retries} retries: {e}")
+                return 404
+            backoff = 2 ** retry_count
+            logging.warning(f"Retrying in {backoff}s ({max_retries - retry_count} left): {e}")
+            time.sleep(backoff)
 
     # No page exists for this year
     if response.status_code == 404:
@@ -287,6 +349,9 @@ def main():
     # Print the header of our report
     fmt(False)
 
+    session = create_session()
+    rate_limiter = RateLimiter(rate_per_second=4)
+
     total_processed = 0
     total_results = 0
     started_time = time.time()
@@ -322,7 +387,7 @@ def main():
             meta_info, status, page_no = {}, 200, 1
             while status == 200:
                 url = f"https://utmb.world/utmb-index/races/{race_uid}..{year}?page={page_no}"
-                status = add_page(url, meta_info)
+                status = add_page(url, meta_info, session, rate_limiter)
                 page_no += 1
 
             content = [''] * 5
@@ -342,14 +407,6 @@ def main():
 
             url = f"https://utmb.world/utmb-index/races/{race_uid}..{year}?page=1"
             fmt(meta_info, utmb_key, *content, url, status)
-
-            if race_count > 0 and race_count % 500 == 0:
-                logging.info(f"Reached {len(utmb_results)} races for year {year}, saving and pausing...")
-                json_out(utmb_results, results_file)
-                elapsed = time.time() - started_time
-                logging.info(f"Running for {elapsed/60:.2f} min, processed {race_count} races this year")
-                logging.info("Pausing for 1 minute...")
-                time.sleep(60)
 
         json_out(utmb_results, results_file)
         total_processed += race_count

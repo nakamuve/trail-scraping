@@ -1,0 +1,180 @@
+{
+    "88106": {
+        "Age": {
+            "23": 4,
+            "35": 2,
+            "40": 7,
+            "45": 7,
+            "50": 2,
+            "55": 2,
+            "60": 1
+        },
+        "City / Country": "Portugal",
+        "Country": {
+            "MOZ": 1,
+            "POR": 24
+        },
+        "Distance": "63.00 Km",
+        "Elevation Gain": "+3700 m",
+        "N Results": 25,
+        "Race Category": "50K (63.00 Km)",
+        "Race Date": "0001/01/01",
+        "Race Title": "Trail S\u00e3o Jo\u00e3o da Vila 2024",
+        "Results": [
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "4212006",
+                "time": 4.335555555555556
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "5614789",
+                "time": 4.889166666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "4393148",
+                "time": 4.925833333333333
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "1495735",
+                "time": 4.949166666666667
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "1272245",
+                "time": 5.091111111111111
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "645998",
+                "time": 5.322777777777778
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "4393150",
+                "time": 5.393055555555556
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "3685037",
+                "time": 5.415277777777778
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "1264559",
+                "time": 5.426111111111111
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "887787",
+                "time": 5.426111111111111
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "4373194",
+                "time": 5.5088888888888885
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "5614790",
+                "time": 5.728055555555556
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "4578362",
+                "time": 5.731944444444444
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "1830525",
+                "time": 5.763055555555556
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "5297360",
+                "time": 6.016111111111111
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "1495775",
+                "time": 6.091944444444444
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "5614791",
+                "time": 6.195555555555556
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "2607095",
+                "time": 6.195833333333334
+            },
+            {
+                "gender": "F",
+                "nationality": "POR",
+                "runner_id": "2164839",
+                "time": 6.1994444444444445
+            },
+            {
+                "gender": "F",
+                "nationality": "POR",
+                "runner_id": "2164813",
+                "time": 6.443333333333333
+            },
+            {
+                "gender": "F",
+                "nationality": "MOZ",
+                "runner_id": "4937697",
+                "time": 6.626388888888889
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "1830513",
+                "time": 6.639722222222222
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "5614792",
+                "time": 6.9188888888888895
+            },
+            {
+                "gender": "M",
+                "nationality": "POR",
+                "runner_id": "5614793",
+                "time": 7.019166666666667
+            },
+            {
+                "gender": "F",
+                "nationality": "POR",
+                "runner_id": "1371693",
+                "time": 7.854722222222222
+            }
+        ],
+        "Sex": {
+            "F": 4,
+            "M": 21
+        }
+    }
+}

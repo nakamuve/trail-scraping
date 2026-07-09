@@ -1,0 +1,393 @@
+{
+    "10342": {
+        "Age": {
+            "18": 1,
+            "23": 16,
+            "35": 6,
+            "40": 5,
+            "45": 5,
+            "50": 2,
+            "55": 2,
+            "60": 1
+        },
+        "City / Country": "United States",
+        "Country": {
+            "AUS": 1,
+            "GER": 1,
+            "RSA": 1,
+            "USA": 57
+        },
+        "Distance": "161.00 Km",
+        "Elevation Gain": "+4270 m",
+        "N Results": 60,
+        "Race Category": "Ultra (161.00 Km)",
+        "Race Date": "1992/06/06",
+        "Race Title": "OLD DOMINION 100 MILE 1992",
+        "Results": [
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "15237",
+                "time": 15.166666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "33940",
+                "time": 16.633333333333333
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "475315",
+                "time": 16.633333333333333
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "54198",
+                "time": 17.566666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "360305",
+                "time": 18.183333333333334
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648545",
+                "time": 18.25
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "83523",
+                "time": 18.833333333333332
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648546",
+                "time": 18.833333333333332
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648547",
+                "time": 19.416666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648548",
+                "time": 19.816666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "359865",
+                "time": 19.816666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648569",
+                "time": 19.9
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "83596",
+                "time": 19.95
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "359850",
+                "time": 20.75
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "1348021",
+                "time": 20.833333333333332
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "284904",
+                "time": 20.916666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "36143",
+                "time": 21.066666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648549",
+                "time": 21.066666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "GER",
+                "runner_id": "32800",
+                "time": 21.083333333333332
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "546001",
+                "time": 21.3
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648550",
+                "time": 21.316666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "184096",
+                "time": 21.416666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "234539",
+                "time": 21.416666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "177627",
+                "time": 21.75
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648551",
+                "time": 21.883333333333333
+            },
+            {
+                "gender": "M",
+                "nationality": "RSA",
+                "runner_id": "304204",
+                "time": 21.883333333333333
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "108577",
+                "time": 21.95
+            },
+            {
+                "gender": "F",
+                "nationality": "USA",
+                "runner_id": "648552",
+                "time": 22.033333333333335
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "359944",
+                "time": 22.066666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648553",
+                "time": 22.166666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "16667",
+                "time": 22.166666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648554",
+                "time": 22.3
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "284872",
+                "time": 22.483333333333334
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648555",
+                "time": 22.783333333333335
+            },
+            {
+                "gender": "M",
+                "nationality": "AUS",
+                "runner_id": "430370",
+                "time": 22.783333333333335
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648556",
+                "time": 22.883333333333333
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648570",
+                "time": 22.9
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648557",
+                "time": 22.933333333333334
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648558",
+                "time": 23.066666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648559",
+                "time": 23.066666666666666
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648560",
+                "time": 23.366666666666667
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648561",
+                "time": 23.65
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "359797",
+                "time": 23.666666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "204667",
+                "time": 23.716666666666665
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "15619",
+                "time": 23.766666666666666
+            },
+            {
+                "gender": "F",
+                "nationality": "USA",
+                "runner_id": "546713",
+                "time": 23.833333333333332
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "137658",
+                "time": 23.833333333333332
+            },
+            {
+                "gender": "F",
+                "nationality": "USA",
+                "runner_id": "648562",
+                "time": 24.95
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "16642",
+                "time": 25.1
+            },
+            {
+                "gender": "F",
+                "nationality": "USA",
+                "runner_id": "648563",
+                "time": 25.1
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648564",
+                "time": 25.1
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648565",
+                "time": 25.25
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "14074",
+                "time": 26.3
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "570802",
+                "time": 27.166666666666668
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "23433",
+                "time": 27.333333333333332
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648566",
+                "time": 27.583333333333332
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "248813",
+                "time": 27.683333333333334
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648567",
+                "time": 27.683333333333334
+            },
+            {
+                "gender": "M",
+                "nationality": "USA",
+                "runner_id": "648568",
+                "time": 28.0
+            },
+            {
+                "gender": "F",
+                "nationality": "USA",
+                "runner_id": "385109",
+                "time": 28.0
+            }
+        ],
+        "Sex": {
+            "F": 5,
+            "M": 55
+        }
+    }
+}

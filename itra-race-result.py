@@ -7,6 +7,8 @@ import json
 import time
 import logging
 import re
+import os
+import threading
 from itra_fetch_race_details import fetch_race_details
 
 # Configure logging
@@ -39,100 +41,140 @@ def json_out(obj, file_path):
         logging.info(f"Successfully saved data to {file_path}")
 
 
+class RateLimiter:
+    """Token-bucket rate limiter for thread-safe request throttling"""
+    def __init__(self, rate_per_second):
+        self.min_interval = 1.0 / rate_per_second if rate_per_second > 0 else 0
+        self.lock = threading.Lock()
+        self.last_request = 0.0
+
+    def acquire(self):
+        """Block until it's safe to make a request (thread-safe)"""
+        if self.min_interval <= 0:
+            return
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_request
+            if elapsed < self.min_interval:
+                time.sleep(self.min_interval - elapsed)
+            self.last_request = time.time()
+
+
+def create_session():
+    session = requests.Session()
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    retry = Retry(
+        total=5,
+        backoff_factor=1.0,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+    })
+    return session
+
+
 def time2float(time_str):
     """Convert time string (HH:MM:SS) to float hours"""
     try:
-        parts = time_str.split(":")
-        if len(parts) == 3:  # HH:MM:SS
-            hours, minutes, seconds = map(int, parts)
-            return hours + minutes / 60 + seconds / 3600
-        elif len(parts) == 2:  # MM:SS
-            minutes, seconds = map(int, parts)
-            return minutes / 60 + seconds / 3600
-        else:
-            return 0
-    except (ValueError, AttributeError, TypeError):
-        logging.warning(f"Could not convert time string: {time_str}")
+        if isinstance(time_str, str) and ":" in time_str:
+            parts = time_str.split(":")
+            if len(parts) == 3:
+                return float(parts[0]) + float(parts[1]) / 60 + float(parts[2]) / 3600
+            elif len(parts) == 2:
+                return float(parts[0]) + float(parts[1]) / 60
+        return 0
+    except (ValueError, TypeError, ZeroDivisionError):
         return 0
 
 
 def fmt(info=None, *args):
     """Format and print data as a markdown table"""
-    # Define column formats
-    columns = [
-        ("KEY", 10, str.rjust),
-        ("N_R", 5, str.rjust),
-        ("CAT", 4, str.rjust),
-        ("DST", 8, str.rjust),
-        ("TIME", 8, str.rjust),
-        ("LOCATION", 30, str.ljust),
-        ("NAME", 40, str.ljust),
-        ("URL", 45, str.ljust),
-        ("STATUS", 3, str.ljust),
+    headers = [
+        "Race ID",
+        "N Results",
+        "Race Category",
+        "Distance",
+        "Race Date",
+        "Results",
+        "Race Title",
+        "City / Country",
+        "URL",
+        "Status",
     ]
 
     if info is False:
-        # Print headers
-        headers = [col[0] for col in columns]
+        # Print header row
+        print("|", " | ".join(headers), "|")
+        print(
+            "|",
+            " | ".join(["---"] * len(headers)),
+            "|",
+        )
+        return  # Don't print separator as data
+
+    if not info:
+        # Print None info
         formatted = []
-        for i, header in enumerate(headers):
-            if i < len(columns):
-                _, width, formatter = columns[i]
-                formatted.append(formatter(header, width))
+        for i, arg in enumerate(args[:10]):
+            if arg:
+                formatted.append(str(arg))
+            else:
+                formatted.append("")
         print("|", " | ".join(formatted), "|")
         return
 
-    if info is None:
-        return
-
-    # Process args
-    processed_args = []
-    for arg in args:
-        # If arg is a key in info, replace it with the value
-        if isinstance(info, dict) and isinstance(arg, str) and arg in info:
-            processed_args.append(info[arg])
-        else:
-            processed_args.append(arg)
-
-    # Handle Results special case for average time
-    final_args = []
-    for arg in processed_args:
-        if isinstance(arg, list) and any(isinstance(r, dict) for r in arg):
-            # For list of dictionaries (Results)
-            times = []
-            for r in arg:
-                if isinstance(r, dict) and "time" in r and r["time"] > 0:
-                    times.append(r["time"])
-            if times:
-                final_args.append(f"{np.mean(times):.1f} hrs")
-            else:
-                final_args.append(arg)
-        else:
-            final_args.append(arg)
-
-    # Format each column
     formatted = []
-    for i, arg in enumerate(final_args):
-        if i < len(columns):
-            _, width, formatter = columns[i]
-            formatted.append(formatter(str(arg)[:width], width))
+    formatted.append(str(args[0]) if args else "N/A")
+
+    content_keys = [
+        "N Results",
+        "Race Category",
+        "Distance",
+        "Race Date",
+        "Results",
+        "Race Title",
+        "City / Country",
+    ]
+
+    for i, key in enumerate(content_keys):
+        if i + 1 < len(args):
+            formatted.append(args[i + 1])
+        elif info.get(key):
+            value = info[key]
+            if isinstance(value, list):
+                formatted.append(f"{len(value)} items")
+            elif isinstance(value, dict):
+                formatted.append(f"{len(value)} items")
+            else:
+                formatted.append(str(value))
         else:
-            formatted.append(str(arg))
+            formatted.append("")
+
+    # Add URL and status
+    if len(args) > 7:
+        formatted.append(args[7])
+    else:
+        formatted.append("")
+    if len(args) > 8:
+        formatted.append(str(args[8]))
+    else:
+        formatted.append("")
 
     print("|", " | ".join(formatted), "|")
 
 
-def scrape_itra_race(race_id):
+def scrape_itra_race(race_id, session, rate_limiter):
     """Scrape race data from ITRA website"""
     url = f"https://itra.run/Races/RaceResults/{race_id}"
-
-    # Headers to mimic a browser request
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive",
-    }
 
     logging.info(f"Requesting ITRA race {race_id} from {url}")
 
@@ -141,7 +183,21 @@ def scrape_itra_race(race_id):
         detail_data = fetch_race_details(race_id)
 
         # Then fetch the race results page
-        response = requests.get(url, headers=headers, timeout=30)
+        max_retries = 3
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                rate_limiter.acquire()
+                response = session.get(url, timeout=15)
+                break
+            except requests.RequestException as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logging.error(f"Request failed after {max_retries} retries: {e}")
+                    return {}, 404
+                backoff = 2 ** retry_count
+                logging.warning(f"Retrying in {backoff}s ({max_retries - retry_count} left): {e}")
+                time.sleep(backoff)
 
         if response.status_code != 200:
             logging.warning(
@@ -471,6 +527,9 @@ def main():
         logging.error("No ITRA UID files found in result/race-uids/")
         return
 
+    session = create_session()
+    rate_limiter = RateLimiter(rate_per_second=4)
+
     # Print header for report
     fmt(False)
 
@@ -504,7 +563,7 @@ def main():
 
             logging.info(f"Processing race {itra_key} ({year})")
             try:
-                race_info, status = scrape_itra_race(race_uid)
+                race_info, status = scrape_itra_race(race_uid, session, rate_limiter)
 
                 if race_info and race_info.get("Results"):
                     itra_results[itra_key] = race_info
@@ -540,8 +599,6 @@ def main():
                     logging.info(
                         f"Running for {elapsed / 60:.2f} min, {race_count} races in year {year}"
                     )
-                    logging.info("Pausing for 2 minutes to avoid rate limiting...")
-                    time.sleep(60 * 2)
 
             except Exception as e:
                 logging.error(f"Error processing race {itra_key}: {str(e)}")
