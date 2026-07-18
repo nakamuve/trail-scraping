@@ -32,7 +32,7 @@ already exists, the newly found race UIDs are merged into it.
 Gamalan, May 2025
 """
 
-import requests
+import curl_cffi.requests
 from tqdm import tqdm
 from pathlib import Path
 import json
@@ -43,8 +43,6 @@ import os
 import threading
 import argparse
 import logging
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 
 class RateLimiter:
@@ -95,18 +93,18 @@ def extract_year(response_text):
 file_lock = threading.Lock()
 
 
-# Create a session with retry capabilities
+# Rate-limit retry backoff schedule (seconds)
+_RATE_LIMIT_BACKOFFS = [15, 30, 60]
+
+
+def _is_rate_limited(status_code):
+    """Check if status indicates rate limiting (AWS WAF returns 202)."""
+    return status_code in (202, 429, 503)
+
+
+# Create a session with TLS fingerprint impersonation
 def create_session():
-    session = requests.Session()
-    retry = Retry(
-        total=5,
-        backoff_factor=1.0,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET"],
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
+    session = curl_cffi.requests.Session()
 
     # Add browser-like headers to avoid 403 errors
     session.headers.update({
@@ -116,14 +114,6 @@ def create_session():
         'Accept': ('text/html,application/xhtml+xml,application/xml;'
                    'q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'),
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
     })
 
     return session
@@ -154,29 +144,26 @@ def check_race_uid(race_uid, save_dir, session, rate_limiter, debug=False):
     if debug:
         logging.debug(f"UID {race_uid}: Checking at {url}")
 
-    max_retries = 3
-    retry_count = 0
-    while retry_count < max_retries:
+    # Retry loop with backoff for rate-limited responses
+    for attempt in range(1 + len(_RATE_LIMIT_BACKOFFS)):
         try:
             # Throttle request rate globally across all threads
             rate_limiter.acquire()
 
-            response = session.get(url, timeout=15)
+            response = session.get(url, timeout=15, impersonate='chrome123')
 
             if debug:
                 logging.debug(
                     f"UID {race_uid}: Got response status {response.status_code}"
                 )
 
-            if response.status_code == 503:
-                retry_count += 1
-                backoff = 2 ** retry_count
-                remaining = max_retries - retry_count
+            if _is_rate_limited(response.status_code) and attempt < len(_RATE_LIMIT_BACKOFFS):
+                wait = _RATE_LIMIT_BACKOFFS[attempt]
                 logging.warning(
-                    f"UID {race_uid}: 503, "
-                    f"backing off {backoff}s ({remaining} retries left)"
+                    f"UID {race_uid}: got {response.status_code}, "
+                    f"backing off {wait}s ({attempt+1}/{len(_RATE_LIMIT_BACKOFFS)})"
                 )
-                time.sleep(backoff)
+                time.sleep(wait)
                 continue
 
             # Use a lock when writing to the file
@@ -206,24 +193,23 @@ def check_race_uid(race_uid, save_dir, session, rate_limiter, debug=False):
                         race_file.unlink()
                     return None
 
-        except requests.RequestException as e:
-            retry_count += 1
-            if retry_count >= max_retries:
+        except Exception as e:
+            if attempt >= len(_RATE_LIMIT_BACKOFFS):
                 logging.warning(
                     f"Error checking race UID {race_uid} after "
-                    f"{max_retries} retries: {e}"
+                    f"{len(_RATE_LIMIT_BACKOFFS) + 1} attempts: {e}"
                 )
                 # Remove empty file if there was an error
                 with file_lock:
                     if race_file.is_file():
                         race_file.unlink()
                 return None
-            backoff = 2 ** retry_count
+            wait = _RATE_LIMIT_BACKOFFS[attempt]
             logging.warning(
-                f"Retrying UID {race_uid} in {backoff}s "
-                f"({max_retries - retry_count} retries left): {e}"
+                f"Retrying UID {race_uid} in {wait}s "
+                f"({len(_RATE_LIMIT_BACKOFFS) - attempt} retries left): {e}"
             )
-            time.sleep(backoff)
+            time.sleep(wait)
             continue
 
 

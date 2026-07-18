@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import requests
+import curl_cffi.requests
 from bs4 import BeautifulSoup
 import numpy as np
 from pathlib import Path
@@ -32,23 +32,12 @@ class RateLimiter:
 
 
 def create_session():
-    session = requests.Session()
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry
-    retry = Retry(
-        total=5,
-        backoff_factor=1.0,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET"],
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
+    """Create a curl_cffi session that bypasses AWS WAF via TLS fingerprint impersonation."""
+    session = curl_cffi.requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
     })
     return session
 
@@ -166,7 +155,7 @@ def fmt(info: Union[dict, bool, None] = None, *args) -> None:
     print('|', ' | '.join([mt(a, sp) for a, (_, sp, mt) in zip(args, spacing)]), '|')
 
 
-def get_meta_info(request_response: requests.Response) -> dict:
+def get_meta_info(request_response) -> dict:
     """   
     PURPOSE
     Extract metadata from the HTML content of a race event web page. 
@@ -217,7 +206,7 @@ def add_page(request_url: Union[str, bytes], info: dict, session, rate_limiter: 
     ARGUMENTS
     request_url (str | bytes): The URL of the web page to be requested and parsed. This URL points to a specific race event page.
     info (dict): A dictionary to be updated with the extracted metadata and results. This dictionary will be populated with information such as race title, category, results, number of results, and breakdowns by country, sex, and age.
-    session (requests.Session): The HTTP session with retry configuration.
+    session (curl_cffi.requests.Session): The HTTP session with TLS fingerprint impersonation.
     rate_limiter (RateLimiter): The rate limiter for request throttling.
     
     RETURNS
@@ -246,27 +235,39 @@ def add_page(request_url: Union[str, bytes], info: dict, session, rate_limiter: 
 
     logging.info(f"Requesting page: {request_url}")
 
-    # Request the page with retries and rate limiting
-    max_retries = 3
-    retry_count = 0
-    while retry_count < max_retries:
-        try:
-            rate_limiter.acquire()
-            response = session.get(request_url, timeout=15)
-            break
-        except requests.RequestException as e:
-            retry_count += 1
-            if retry_count >= max_retries:
-                logging.error(f"Request failed after {max_retries} retries: {e}")
-                return 404
-            backoff = 2 ** retry_count
-            logging.warning(f"Retrying in {backoff}s ({max_retries - retry_count} left): {e}")
-            time.sleep(backoff)
+    # Rate-limit retry backoff schedule (seconds) — AWS WAF JS challenge / server overload
+    # ITRA returns 202 (AWS WAF), UTMB returns 503 (nginx) when hammered.
+    backoffs = [15, 30, 60]
 
-    # No page exists for this year
+    # Request the page with retries and rate limiting
+    for attempt in range(1 + len(backoffs)):
+        rate_limiter.acquire()
+        response = session.get(request_url, timeout=30, impersonate='chrome123')
+
+        if response.status_code == 200:
+            break
+
+        if response.status_code in (202, 429, 503) and attempt < len(backoffs):
+            wait = backoffs[attempt]
+            logging.warning(
+                f"SERVER BUSY on {request_url} (status={response.status_code}). "
+                f"Waiting {wait}s before retry ({attempt+1}/{len(backoffs)})."
+            )
+            time.sleep(wait)
+            continue
+
+        # No page exists for this year
+        if response.status_code in (202, 404, 429):
+            logging.warning(f"Page not found (status={response.status_code}): {request_url}")
+            return 404
+
     if response.status_code == 404:
         logging.warning(f"Page not found (404): {request_url}")
         return 404
+
+    if response.status_code == 503:
+        logging.warning(f"Server still busy after retries: {request_url}")
+        return 503
 
     soup = BeautifulSoup(response.content, "html.parser")
     if not any(info):
@@ -350,7 +351,7 @@ def main():
     fmt(False)
 
     session = create_session()
-    rate_limiter = RateLimiter(rate_per_second=4)
+    rate_limiter = RateLimiter(rate_per_second=2)
 
     total_processed = 0
     total_results = 0
@@ -367,20 +368,16 @@ def main():
         results_file = data_dir / f'utmb-race-data-{year}.json'
         utmb_results = json_in(results_file) or {}
 
-        last_race_uid = 0
-        if utmb_results:
-            last_race_uid = max(int(k.split('.')[0]) for k in utmb_results)
-            logging.info(f"Year {year}: {len(utmb_results)} existing results, last UID: {last_race_uid}")
-        else:
-            logging.info(f"Year {year}: no existing results, {len(race_uids_data)} UIDs to process")
+        logging.info(f"Year {year}: {len(utmb_results)} existing results, {len(race_uids_data)} UIDs to process")
 
         race_count = 0
+        consecutive_rate_limits = 0
 
         for race_uid in race_uids_data:
             race_uid = int(race_uid)
             utmb_key = f'{race_uid}.{year}'
 
-            if race_uid <= last_race_uid or utmb_key in utmb_results:
+            if utmb_key in utmb_results:
                 continue
 
             logging.info(f"Processing race {utmb_key}")
@@ -389,6 +386,18 @@ def main():
                 url = f"https://utmb.world/utmb-index/races/{race_uid}..{year}?page={page_no}"
                 status = add_page(url, meta_info, session, rate_limiter)
                 page_no += 1
+
+            # When the server is overloaded, apply a global cooldown
+            if status == 503:
+                consecutive_rate_limits += 1
+                cooldown = min(consecutive_rate_limits * 300, 1800)  # 5min, 10min, … 30min max
+                logging.warning(
+                    f"Server busy {consecutive_rate_limits}x in a row. "
+                    f"Cooling down for {cooldown}s ({cooldown//60}min)…"
+                )
+                time.sleep(cooldown)
+            else:
+                consecutive_rate_limits = 0
 
             content = [''] * 5
             if meta_info and meta_info.get('Results') and len(meta_info['Results']) > 0:

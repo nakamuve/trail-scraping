@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import requests
+import curl_cffi.requests
 from bs4 import BeautifulSoup
 import numpy as np
 from pathlib import Path
@@ -61,23 +61,12 @@ class RateLimiter:
 
 
 def create_session():
-    session = requests.Session()
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry
-    retry = Retry(
-        total=5,
-        backoff_factor=1.0,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET"],
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
+    """Create a curl_cffi session that bypasses Cloudflare via TLS fingerprint impersonation."""
+    session = curl_cffi.requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
     })
     return session
 
@@ -119,7 +108,7 @@ def fmt(info=None, *args):
             " | ".join(["---"] * len(headers)),
             "|",
         )
-        return  # Don't print separator as data
+        return
 
     if not info:
         # Print None info
@@ -147,7 +136,7 @@ def fmt(info=None, *args):
 
     for i, key in enumerate(content_keys):
         if i + 1 < len(args):
-            formatted.append(args[i + 1])
+            formatted.append(str(args[i + 1]))
         elif info.get(key):
             value = info[key]
             if isinstance(value, list):
@@ -161,7 +150,7 @@ def fmt(info=None, *args):
 
     # Add URL and status
     if len(args) > 7:
-        formatted.append(args[7])
+        formatted.append(str(args[7]))
     else:
         formatted.append("")
     if len(args) > 8:
@@ -172,6 +161,17 @@ def fmt(info=None, *args):
     print("|", " | ".join(formatted), "|")
 
 
+# Rate-limit retry backoff schedule (seconds) — AWS WAF JS challenge
+# After 15-30 normal requests, ITRA starts returning 202 + a JS challenge.
+# The challenge clears after ~30-60s. These retries handle that cooldown.
+_RATE_LIMIT_BACKOFFS = [15, 30, 60]
+
+
+def _is_rate_limited(status_code):
+    """Check if a status code indicates rate limiting."""
+    return status_code in (202, 429)
+
+
 def scrape_itra_race(race_id, session, rate_limiter):
     """Scrape race data from ITRA website"""
     url = f"https://itra.run/Races/RaceResults/{race_id}"
@@ -180,30 +180,33 @@ def scrape_itra_race(race_id, session, rate_limiter):
 
     try:
         # First fetch the race details page to get better distance and elevation data
-        detail_data = fetch_race_details(race_id)
+        detail_data = fetch_race_details(race_id, session=session)
 
-        # Then fetch the race results page
-        max_retries = 3
-        retry_count = 0
-        while retry_count < max_retries:
-            try:
-                rate_limiter.acquire()
-                response = session.get(url, timeout=15)
+        # Then fetch the race results page, with rate-limit retry
+        response = None
+        for attempt in range(1 + len(_RATE_LIMIT_BACKOFFS)):
+            rate_limiter.acquire()
+            response = session.get(url, timeout=30, impersonate='chrome123')
+
+            if response.status_code == 200:
                 break
-            except requests.RequestException as e:
-                retry_count += 1
-                if retry_count >= max_retries:
-                    logging.error(f"Request failed after {max_retries} retries: {e}")
-                    return {}, 404
-                backoff = 2 ** retry_count
-                logging.warning(f"Retrying in {backoff}s ({max_retries - retry_count} left): {e}")
-                time.sleep(backoff)
 
-        if response.status_code != 200:
+            if _is_rate_limited(response.status_code) and attempt < len(_RATE_LIMIT_BACKOFFS):
+                wait = _RATE_LIMIT_BACKOFFS[attempt]
+                logging.warning(
+                    f"RATE LIMITED on race {race_id} (status={response.status_code}). "
+                    f"Waiting {wait}s before retry ({attempt+1}/{len(_RATE_LIMIT_BACKOFFS)})."
+                )
+                time.sleep(wait)
+                continue
+
             logging.warning(
                 f"Failed to fetch race {race_id}, status code: {response.status_code}"
             )
             return {}, response.status_code
+
+        if response is None or response.status_code != 200:
+            return {}, 202
 
         # Parse the HTML content
         soup = BeautifulSoup(response.text, "html.parser")
@@ -507,11 +510,8 @@ def scrape_itra_race(race_id, session, rate_limiter):
 
         return race_info, 200
 
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Request error: {str(e)}")
-        return {}, 404
     except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}")
+        logging.error(f"Unexpected error scraping race {race_id}: {str(e)}")
         return {}, 500
 
 
@@ -550,20 +550,34 @@ def main():
         results_file = data_dir / f'itra-race-data-{year}.json'
         itra_results = json_in(results_file) or {}
 
-        last_race_uid = max((int(k) for k in itra_results), default=-1)
         logging.info(f"Year {year}: {len(itra_results)} existing results, {len(race_uids)} UIDs")
 
         race_count = 0
 
+        consecutive_rate_limits = 0
+
         for race_uid in race_uids:
             itra_key = str(race_uid)
 
-            if race_uid <= last_race_uid or itra_key in itra_results:
+            if itra_key in itra_results:
                 continue
 
             logging.info(f"Processing race {itra_key} ({year})")
             try:
                 race_info, status = scrape_itra_race(race_uid, session, rate_limiter)
+
+                # When retries are exhausted on a 202, apply a global cooldown
+                # so the AWS WAF challenge clears before the next attempt.
+                if status in (202, 429):
+                    consecutive_rate_limits += 1
+                    cooldown = min(consecutive_rate_limits * 300, 1800)  # 5min, 10min, 15min… capped at 30min
+                    logging.warning(
+                        f"Rate-limited {consecutive_rate_limits}x in a row. "
+                        f"Cooling down for {cooldown}s ({cooldown//60}min)…"
+                    )
+                    time.sleep(cooldown)
+                else:
+                    consecutive_rate_limits = 0
 
                 if race_info and race_info.get("Results"):
                     itra_results[itra_key] = race_info

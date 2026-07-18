@@ -19,3 +19,6 @@ app/wrangler.jsonc
 !utmb-race-uids.json
 !utmb-race-data-raw.json
 .omp
+
+# Temporary UID checkpoint directories (regenerated on each run)
+*_race_details/

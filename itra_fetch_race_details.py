@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-import requests
+import curl_cffi.requests
 from bs4 import BeautifulSoup
 import logging
 import re
+import time
 
 
-def fetch_race_details(race_id):
+def fetch_race_details(race_id, session=None):
     """Fetch additional race details from the RaceDetails page"""
     url = f"https://itra.run/Races/RaceDetails/{race_id}"
 
-    # Headers to mimic a browser request
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive",
-    }
+    if session is None:
+        session = curl_cffi.requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        })
 
     logging.info(f"Requesting ITRA race details {race_id} from {url}")
 
@@ -63,9 +63,21 @@ def fetch_race_details(race_id):
     ]
 
     try:
-        response = requests.get(url, headers=headers, timeout=30)
+        for attempt in range(4):
+            response = session.get(url, timeout=30, impersonate='chrome123')
 
-        if response.status_code != 200:
+            if response.status_code == 200:
+                break
+
+            if response.status_code in (202, 429) and attempt < 3:
+                wait = (attempt + 1) * 15  # 15s, 30s, 45s
+                logging.warning(
+                    f"RATE LIMITED on race details {race_id} (status={response.status_code}). "
+                    f"Waiting {wait}s before retry ({attempt+1}/3)."
+                )
+                time.sleep(wait)
+                continue
+
             logging.warning(
                 f"Failed to fetch race details {race_id}, status code: {response.status_code}"
             )
@@ -73,6 +85,15 @@ def fetch_race_details(race_id):
                 "Distance": "Unknown",
                 "Elevation Gain": "Unknown",
                 "Race Date": "Unknown",
+                "Location": "Unknown",
+            }
+
+        if response.status_code != 200:
+            return {
+                "Distance": "Unknown",
+                "Elevation Gain": "Unknown",
+                "Race Date": "Unknown",
+                "Location": "Unknown",
             }
 
         # Parse the HTML content
@@ -530,7 +551,7 @@ def fetch_race_details(race_id):
         return details
 
     except Exception as e:
-        logging.error(f"Error fetching race details: {str(e)}")
+        logging.error(f"Error fetching race details {race_id}: {str(e)}")
         return {
             "Distance": "Unknown",
             "Elevation Gain": "Unknown",
