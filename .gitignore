@@ -22,3 +22,6 @@ app/wrangler.jsonc
 
 # Temporary UID checkpoint directories (regenerated on each run)
 *_race_details/
+
+# Generated race data (large files, >50 MB each)
+result/race-data/
