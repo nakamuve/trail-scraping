@@ -211,7 +211,7 @@ def main():
     parser = argparse.ArgumentParser(description='Check existence of UTMB race UIDs')
     parser.add_argument('--start', type=int, default=0,
                         help='Start UID (default: 0)')
-    parser.add_argument('--end', type=int, default=150000)
+    parser.add_argument('--end', type=int, default=250000)
     parser.add_argument('--workers', type=int, default=os.cpu_count() or 4)
     parser.add_argument('--year-start', type=int, default=2003)
     parser.add_argument('--year-end', type=int, default=2025)
