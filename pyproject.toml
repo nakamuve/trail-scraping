@@ -8,6 +8,7 @@ dependencies = [
     "beautifulsoup4>=4.13.4",
     "curl-cffi>=0.15.0",
     "numpy>=2.2.5",
+    "pyarrow>=25.0.0",
     "requests>=2.32.3",
     "scrapling>=0.2.99",
     "tqdm>=4.67.1",
