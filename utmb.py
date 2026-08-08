@@ -206,6 +206,27 @@ def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False
             return None
 
 
+def collect_from_checkpoints(save_dir) -> dict[int, list[int]]:
+    """Rebuild per-year UID lists from the checkpoint directory.
+
+    Each utmb_race_{uid}.json checkpoint stores the year the race was found.
+    This is the source of truth — it survives partial/interrupted runs, unlike
+    the in-memory `existing_races` list which only covers a single run.
+    """
+    races_by_year: dict[int, list[int]] = {}
+    for f in save_dir.glob('utmb_race_*.json'):
+        try:
+            with open(f) as fh:
+                data = json.load(fh)
+            year = data.get('year')
+            race_uid = int(f.stem.rsplit('_', 1)[-1])
+        except (ValueError, OSError, json.JSONDecodeError):
+            continue
+        if year is not None:
+            races_by_year.setdefault(year, []).append(race_uid)
+    return races_by_year
+
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Check existence of UTMB race UIDs')
@@ -289,27 +310,26 @@ def main():
     output_dir = root / 'result' / 'race-uids'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Group new races by year
-    races_by_year: dict[int, list[int]] = {}
-    for race_uid, year in existing_races:
-        races_by_year.setdefault(year, []).append(race_uid)
+    # Rebuild per-year UID lists from checkpoints (source of truth — survives
+    # interrupted runs). The in-memory `existing_races` only covers this run's
+    # UID range and would overwrite complete data with a partial snapshot.
+    races_by_year = collect_from_checkpoints(save_dir)
 
-    total_new = 0
     total_all = 0
     for year in sorted(races_by_year):
         output_file = output_dir / f'utmb-uids-{year}.json'
         existing = json_load(output_file)
         combined = sorted(set(existing + races_by_year[year]))
         json_out(combined, output_file)
-        total_new += len(races_by_year[year])
         total_all += len(combined)
         logging.info(
-            f"Year {year}: {len(races_by_year[year])} new races, "
+            f"Year {year}: {len(races_by_year[year])} races from checkpoints, "
             f"total {len(combined)}"
         )
 
     logging.info(
-        f"Found {total_new} new races across {len(races_by_year)} years. "
+        f"Rebuilt per-year UID files from {sum(len(v) for v in races_by_year.values())} "
+        f"checkpoint files across {len(races_by_year)} years. "
         f"Total: {total_all} races."
     )
     logging.info(f"Results saved to {output_dir}/")
