@@ -1,1 +1,2 @@
 *-raw.json filter=lfs diff=lfs merge=lfs -text
+result/race-data-parquet/*.parquet filter=lfs diff=lfs merge=lfs -text
