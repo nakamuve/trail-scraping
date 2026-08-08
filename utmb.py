@@ -109,14 +109,19 @@ def create_session():
     return session
 
 
-def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False):
-    """Check if a specific race UID exists in any of the given years"""
+def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False, recheck=False):
+    """Check which years a race UID exists in, return list of (uid, year).
+
+    A single UTMB race UID (e.g. a recurring event) can exist in many years.
+    Each year is a separate edition with its own results, so the race must be
+    recorded in EVERY year it exists — not just the first one.
+    """
     race_file = save_dir / f'utmb_race_{race_uid}.json'
 
     # Use a lock to prevent race conditions when checking/creating files
     with file_lock:
-        # Check if the file already exists - if so, skip this UID
-        if race_file.is_file():
+        # Check if the file already exists - if so, skip this UID (unless rechecking)
+        if race_file.is_file() and not recheck:
             # If file exists but is empty, it was started but not completed
             if race_file.stat().st_size == 0:
                 if debug:
@@ -129,8 +134,7 @@ def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False
                 # File exists and has content, skip this UID
                 return None
 
-    race_exists = False
-    found_year = None
+    found_years = []
 
     for year in range(*years):
         url = f'https://utmb.world/utmb-index/races/{race_uid}..{year}'
@@ -153,7 +157,8 @@ def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False
                     )
 
                 if response.status_code == 404:
-                    # Year doesn't exist, try next year
+                    # This year doesn't exist — that's fine, the race may still
+                    # exist in other years. Move on to the next year.
                     break
 
                 if _is_server_busy(response.status_code) and attempt < len(_RATE_LIMIT_BACKOFFS):
@@ -166,8 +171,8 @@ def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False
                     continue
 
                 # Any non-404, non-busy status (including 200, 201, 301, 403)
-                race_exists = True
-                found_year = year
+                # means this race exists in this year
+                found_years.append(year)
                 if debug:
                     logging.debug(f"UID {race_uid}: Found race for year {year}")
                 break
@@ -186,14 +191,11 @@ def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False
                 time.sleep(wait)
                 continue
 
-        if race_exists:
-            break
-
     # Use a lock when writing to the file
     with file_lock:
-        if race_exists:
-            json_out({'Status': 200, 'year': found_year}, race_file)
-            return (race_uid, found_year)
+        if found_years:
+            json_out({'Status': 200, 'years': sorted(found_years)}, race_file)
+            return [(race_uid, year) for year in found_years]
         else:
             # Remove empty file if race doesn't exist in any year
             if race_file.is_file():
@@ -209,20 +211,20 @@ def check_race_uid(race_uid, save_dir, years, session, rate_limiter, debug=False
 def collect_from_checkpoints(save_dir) -> dict[int, list[int]]:
     """Rebuild per-year UID lists from the checkpoint directory.
 
-    Each utmb_race_{uid}.json checkpoint stores the year the race was found.
-    This is the source of truth — it survives partial/interrupted runs, unlike
-    the in-memory `existing_races` list which only covers a single run.
+    Each utmb_race_{uid}.json checkpoint stores the year(s) the race was
+    found. Supports both the old single-year format ({"year": Y}) and the
+    new multi-year format ({"years": [Y1, Y2, ...]}).
     """
     races_by_year: dict[int, list[int]] = {}
     for f in save_dir.glob('utmb_race_*.json'):
         try:
             with open(f) as fh:
                 data = json.load(fh)
-            year = data.get('year')
             race_uid = int(f.stem.rsplit('_', 1)[-1])
         except (ValueError, OSError, json.JSONDecodeError):
             continue
-        if year is not None:
+        years = data.get('years') or ([data['year']] if data.get('year') is not None else [])
+        for year in years:
             races_by_year.setdefault(year, []).append(race_uid)
     return races_by_year
 
@@ -238,6 +240,8 @@ def main():
     parser.add_argument('--year-end', type=int, default=2025)
     parser.add_argument('--batch-size', type=int, default=200)
     parser.add_argument('--rate', type=float, default=2)
+    parser.add_argument('--recheck', action='store_true',
+                        help='Re-check existing UIDs to populate ALL years a race exists in')
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
 
@@ -270,12 +274,32 @@ def main():
     # Process race UIDs in batches to give the server recovery time
     batch_size = args.batch_size
 
+    if args.recheck:
+        # Re-check UIDs that already have checkpoints so each race is recorded
+        # in EVERY year it exists (old checkpoints only stored the first year).
+        # --start/--end act as a filter on which existing UIDs to re-check.
+        existing_uids = []
+        for f in save_dir.glob('utmb_race_*.json'):
+            if f.stat().st_size == 0:
+                continue
+            try:
+                uid = int(f.stem.rsplit('_', 1)[-1])
+            except ValueError:
+                continue
+            if args.start <= uid < args.end:
+                existing_uids.append(uid)
+        existing_uids = sorted(existing_uids)
+        logging.info(f"Re-checking {len(existing_uids)} existing UIDs in range [{args.start}, {args.end})")
+        uid_iter: list[int] = existing_uids
+    else:
+        uid_iter: list[int] = list(range(args.start, args.end))
+
     # Process race UIDs concurrently with batching
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-        for batch_start in range(args.start, args.end, batch_size):
-            batch_end = min(batch_start + batch_size, args.end)
+        for batch_start in range(0, len(uid_iter), batch_size):
+            batch_uids = uid_iter[batch_start:batch_start + batch_size]
 
-            logging.info(f"Processing batch {batch_start}-{batch_end}")
+            logging.info(f"Processing batch {batch_uids[0]}-{batch_uids[-1]} ({len(batch_uids)} UIDs)")
 
             # Create a shared session for this batch
             session = create_session()
@@ -284,24 +308,25 @@ def main():
             future_to_uid = {
                 executor.submit(
                     check_race_uid, race_uid, save_dir, years,
-                    session, rate_limiter, args.debug
+                    session, rate_limiter, args.debug, args.recheck
                 ): race_uid
-                for race_uid in range(batch_start, batch_end)
+                for race_uid in batch_uids
             }
 
             # Process results as they complete
             for future in tqdm(
                 concurrent.futures.as_completed(future_to_uid),
-                total=batch_end - batch_start,
-                desc=f"Batch {batch_start}-{batch_end}"
+                total=len(batch_uids),
+                desc=f"Batch {batch_uids[0]}-{batch_uids[-1]}"
             ):
+                # check_race_uid now returns a LIST of (uid, year) tuples
                 result = future.result()
-                if result is not None:
-                    existing_races.append(result)
+                if result:
+                    existing_races.extend(result)
 
             # Give the server a break between batches
             logging.info(
-                f"Batch {batch_start}-{batch_end} complete, "
+                f"Batch {batch_uids[0]}-{batch_uids[-1]} complete, "
                 f"cooling down for 5 minutes..."
             )
             time.sleep(5 * 60)
